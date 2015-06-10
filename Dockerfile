@@ -10,6 +10,7 @@ FROM ubuntu:14.04
 MAINTAINER Maintaner ngi644
 
 # Update the default application repository sources list
+RUN sudo update-locale LC_ALL=C
 RUN sed -i 's/# \(.*multiverse$\)/\1/g' /etc/apt/sources.list
 RUN apt-get update -y
 RUN apt-get upgrade -y
@@ -34,6 +35,9 @@ ENV INSTALL_DIR adl_lrs
 ENV ADL_USER lrs
 ENV DB_USER $ADL_USER
 ENV DB_PASSWORD postgres
+ENV ADMIN_NAME admin
+ENV ADMIN_EMAIL admin@example.com
+ENV ADMIN_PASS admin
 
 # run postgres
 RUN sudo service postgresql start &&\
@@ -57,16 +61,19 @@ RUN mkdir $INSTALL_DIR
 RUN git clone https://github.com/adlnet/ADL_LRS.git $INSTALL_DIR/
 WORKDIR /home/lrs/$INSTALL_DIR
 RUN sed -i "s/Django==1.4/Django==1.4.20/g" requirements.txt
+RUN sed -i "s|local('./manage.py syncdb')|local('./manage.py syncdb --noinput')|g" fabfile.py
 WORKDIR /home/lrs/$INSTALL_DIR/adl_lrs
 RUN sed -i "s/root/${ADL_USER}/g" settings.py &&\
-    sed -i "s/password/${DB_PASSWORD}/g" settings.py
+    sed -i "s/password/${DB_PASSWORD}/g" settings.py &&\
+    sed -i "s/'en-US'/'en-us'/g" settings.py
 WORKDIR /home/lrs/$INSTALL_DIR
 RUN fab setup_env
 
 RUN . ../env/bin/activate &&\
     sudo service postgresql start &&\
-    sleep 30s &&\
-    fab setup_lrs
+    sleep 40s &&\
+    fab setup_lrs &&\
+    echo "from django.contrib.auth.models import User; User.objects.create_superuser('${ADMIN_NAME}', '${ADMIN_EMAIL}', '${ADMIN_PASS}')" | python manage.py shell
 
 # Define default command.
 USER root
