@@ -1,5 +1,5 @@
 ############################################################
-# Dockerfile to run ADL_LRS Containers
+# Dockerfile to run ADL_LRS Container
 # Based on Ubuntu 14.04 Image
 ############################################################
 
@@ -52,21 +52,21 @@ RUN apt-get install -y openssh-server
 RUN mkdir -p /var/run/sshd && chmod 755 /var/run/sshd
 
 # expose ports
-EXPOSE 22 8000 11211
+EXPOSE 22 80 8000 11211
 
 # install adl_lrs
 USER $ADL_USER
-WORKDIR /home/lrs
+WORKDIR /home/$ADL_USER
 RUN mkdir $INSTALL_DIR
 RUN git clone https://github.com/adlnet/ADL_LRS.git $INSTALL_DIR/
-WORKDIR /home/lrs/$INSTALL_DIR
+WORKDIR /home/$ADL_USER/$INSTALL_DIR
 RUN sed -i "s/Django==1.4/Django==1.4.20/g" requirements.txt
 RUN sed -i "s|local('./manage.py syncdb')|local('./manage.py syncdb --noinput')|g" fabfile.py
-WORKDIR /home/lrs/$INSTALL_DIR/adl_lrs
+WORKDIR /home/$ADL_USER/$INSTALL_DIR/adl_lrs
 RUN sed -i "s/root/${ADL_USER}/g" settings.py &&\
     sed -i "s/password/${DB_PASSWORD}/g" settings.py &&\
     sed -i "s/'en-US'/'en-us'/g" settings.py
-WORKDIR /home/lrs/$INSTALL_DIR
+WORKDIR /home/$ADL_USER/$INSTALL_DIR
 RUN fab setup_env
 
 RUN . ../env/bin/activate &&\
@@ -74,7 +74,29 @@ RUN . ../env/bin/activate &&\
     sleep 40s &&\
     fab setup_lrs &&\
     echo "from django.contrib.auth.models import User; User.objects.create_superuser('${ADMIN_NAME}', '${ADMIN_EMAIL}', '${ADMIN_PASS}')" | python manage.py shell
+RUN . ../env/bin/activate &&\
+    pip install uwsgi==1.9.17.1
+
+# setup uwisgi
+USER root
+ADD scripts/lrs_uwsgi.ini /etc/uwsgi/vassals/
+RUN sed -i "s|path_adl_lrs|/home/${ADL_USER}/${INSTALL_DIR}|g" /etc/uwsgi/vassals/lrs_uwsgi.ini
+RUN sed -i "s|path_virtualenv|/home/${ADL_USER}/env|g" /etc/uwsgi/vassals/lrs_uwsgi.ini
+RUN sed -i "s|path_log|/home/${ADL_USER}/logs|g" /etc/uwsgi/vassals/lrs_uwsgi.ini
+#ADD scripts/lrs.conf /etc/init/
+#RUN sed -i "s|path_virtualenv|/home/${ADL_USER}/env|g" /etc/init/lrs.conf
+
+# setup nginx
+RUN sudo apt-get install -y nginx
+ADD scripts/lrs_nginx.conf /etc/nginx/sites-enabled/
+RUN sudo rm /etc/nginx/sites-enabled/default
+RUN sed -i "s|path_adl_lrs|/home/${ADL_USER}/${INSTALL_DIR}|g" /etc/nginx/sites-enabled/lrs_nginx.conf
+RUN sed -i "s|path_log|/home/${ADL_USER}/logs|g" /etc/nginx/sites-enabled/lrs_nginx.conf
+
 
 # Define default command.
 USER root
-CMD /usr/sbin/sshd -D
+CMD sudo service postgresql start &&\
+  sudo service nginx start &&\
+  su lrs -c '/home/lrs/env/bin/uwsgi --emperor /etc/uwsgi/vassals &' &&\
+  /usr/sbin/sshd -D
